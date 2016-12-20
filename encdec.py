@@ -160,10 +160,51 @@ def forward(src_batch, trg_batch, src_vocab, trg_vocab, encdec, is_training, gen
         return ret
 
 def train(args):
-    pass
+    src_vocab = Vocabulary.new(gens.word_list(args.source), args.src_vocab)
+    trg_vocab = Vocabulary.new(gens.word_list(args.target), args.trg_vocab)
+
+    encdec = EncoderDecoder(args.src_vocab, args.trg_vocab, args.embed, args.hidden)
+    if args.gpu >= 0:
+        encdec.to_gpu()
+
+    for epoch in range(args.epoch):
+
+        gen1 = gens.word_list(args.source)
+        gen2 = gens.word_list(args.target)
+        gen3 = gens.batch(gens.concat_batches(gen1, gen2), args.minibatch)
+
+        opt = optimizers.AdaGrad(lr=0.01)
+        opt.setup(encdec)
+        opt.add_hook(optimizer.GradientClipping(5))
+
+        for src_batch, trg_batch in gen3:
+            ret, loss = forward(src_batch, trg_batch, src_vocab. trg_vocab, encdec, True, 0)
+            loss.backward()
+            opt.update()
+
+        prefix = args.model + ".%03.d"%(epoch+1)
+        src_vocab.save(prefix + ".src.vocab")
+        trg_vocab.save(prefix + ".trg.vocab")
+        encdec.save_spec(prefix + ".spec")
+        serializers.save_hdf5(prefix + ".model", encdec)
 
 def test(args):
-    pass
+    src_vocab = Vocabulary.load(args.model + ".src.vocab")
+    trg_vocab = Vocabulary.load(args.model + ".trg.vocab")
+    encdec = EncoderDecoder.load_spec(args.model + ".spec")
+    if args.gpu >= 0:
+        encdec.to_gpu()
+    serializers.load_hdf5(args.model + ".model", encdec)
+
+    with open(args.target, "w", encoding="utf-8") as f:
+        for src_batch in gens.batch(gets.word_list(args.source), args.minibatch):
+            ret = forward(src_batch, None, src_vocab, trg_vocab,
+                    encdec, False, args.generation_limit)
+
+            for sent in ret:
+                sent.append("</s>")
+                sent = sent[:sent.index("</s>")]
+                print(" ".join(sent), file=f)
 
 def main():
     args = get_args()

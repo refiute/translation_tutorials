@@ -32,7 +32,7 @@ class Vocabulary:
         for (s, _) in list(sorted(count.items(), key=lambda x: -x[1]))[:(size-3)]:
             stoi[s]
 
-        itos = [''] * item
+        itos = [''] * size
         for (s, i) in stoi.items():
             itos[i] = s
 

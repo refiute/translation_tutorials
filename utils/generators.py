@@ -3,7 +3,7 @@
 def word_list(filename):
     with open(filename, encoding="utf-8") as f:
         for line in f:
-            yield l.split()
+            yield line.split()
 
 def batch(generator, batch_size=-1):
     batch = []

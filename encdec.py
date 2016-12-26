@@ -6,7 +6,7 @@ from argparse import ArgumentParser
 import numpy as np
 import chainer
 from chainer import cuda, Function, gradient_check, report, training, utils, Variable
-from chainer import datasets, iterators, optimizers, serializers
+from chainer import datasets, iterators, optimizers, serializers, initializers
 from chainer import Link, Chain, ChainList
 import chainer.functions as F
 import chainer.links as L
@@ -31,24 +31,26 @@ def get_args():
     args.add_argument('target', help="[in/out] target corpus")
     args.add_argument('model', help="[in/out] model file")
     args.add_argument('--gpu', default=gpu, type=int, metavar="INT",
-            help="GPU device ID (default: %(default)d [use CPU])")
+                      help="GPU device ID (default: %(default)d [use CPU])")
     args.add_argument('--src_vocab', default=src_vocab, type=int, metavar="INT",
-            help="source vocabulary size (default: %(default)d)")
+                      help="source vocabulary size (default: %(default)d)")
     args.add_argument('--trg_vocab', default=trg_vocab, type=int, metavar="INT",
-            help="target vocabulary size (default: %(default)d)")
+                      help="target vocabulary size (default: %(default)d)")
     args.add_argument('--embed', default=embed, type=int, metavar="INT",
-            help="embedding layer size (default: %(default)d)")
+                      help="embedding layer size (default: %(default)d)")
     args.add_argument('--hidden', default=hidden, type=int, metavar="INT",
-            help="hidden layer size (default: %(default)d)")
+                      help="hidden layer size (default: %(default)d)")
+    args.add_argument('--epoch', default=epoch, type=int, metavar="INT",
+                      help="training epoch size (default: %(default)d)")
     args.add_argument('--minibatch', default=minibatch, type=int, metavar="INT",
-            help="minibatch size (default: %(default)d)")
+                      help="minibatch size (default: %(default)d)")
     args.add_argument('--generation_limit', default=generation_limit, type=int, metavar="INT",
-            help="maximum number of words to be generated for test input (default: %(default)d)")
+                      help="maximum number of words to be generated for test input (default: %(default)d)")
 
     p = args.parse_args()
 
     try:
-        if p.mode not in ["train", "test"]:
+        if p.env not in ["train", "test"]:
             raise ValueError("args: you must set env = 'train' or 'test'")
         if p.src_vocab < 1:
             raise ValueError("args: you must set --src_vocab >= 1")
@@ -63,7 +65,7 @@ def get_args():
         if p.generation_limit < 1:
             raise ValueError("args: you must set --generation_limit >= 1")
     except Exception as ex:
-        p.print_usage(file=sys.stderr)
+        args.print_usage(file=sys.stderr)
         print(ex, file=sys.stderr)
         sys.exit()
 
@@ -78,12 +80,12 @@ class Encoder(Chain):
         self.train = train
 
     def __call__(self, x, c, h):
-        e = self.tanh(self.embed(x))
+        e = F.tanh(self.embed(x))
         h, c, y = self.lstm(h, c, e, train=self.train)
         return c, h
 
 class Decoder(Chain):
-    def __init__(self, n_layer, vocab_size, embed_size, hidden_size, train=False):
+    def __init__(self, n_layer, vocab_size, embed_size, hidden_size, dropout=0.5, use_cudnn=True, train=False):
         super(Decoder, self).__init__(
             embed = L.EmbedID(vocab_size, embed_size),
             lstm = L.NStepLSTM(n_layer, embed_size, hidden_size, dropout, use_cudnn),
@@ -93,7 +95,7 @@ class Decoder(Chain):
         self.train = train
 
     def __call__(self, y, c, h):
-        e = self.tanh(self.embed(y))
+        e = F.tanh(self.embed(y))
         h, c, l = self.lstm(h, c, e, train=self.train)
         f = F.tanh(self.lf(l))
         y = self.fy(f)
@@ -102,8 +104,8 @@ class Decoder(Chain):
 class EncoderDecoder(Chain):
     def __init__(self, src_vocab, trg_vocab, embed_size, hidden_size, train=False):
         super(EncoderDecoder, self).__init__(
-            enc = Encoder(src_vocab, embed_size, hidden_size, train=train),
-            dec = Decoder(trg_vocab, embed_size, hidden_size, train=train)
+            enc = Encoder(1, src_vocab, embed_size, hidden_size, train=train),
+            dec = Decoder(1, trg_vocab, embed_size, hidden_size, train=train)
         )
         self.src_vocab = src_vocab
         self.trg_vocab = trg_vocab
@@ -139,7 +141,7 @@ class EncoderDecoder(Chain):
             hidden_size = int(next(f))
             return EncoderDecoder(src_vocab, trg_vocab. embed_size, hidden_size, train=train)
 
-def forward(src_batch, trg_batch, src_vocab, trg_vocab, encdec, is_training, generation_limit):
+def forward(src_batch, trg_batch, src_vocab, trg_vocab, encdec, generation_limit, gpu=-1, is_training=False):
     batch_size = len(src_batch)
     src_len = len(src_batch[0])
     trg_len = len(trg_batch[0]) if trg_batch else None
@@ -148,10 +150,10 @@ def forward(src_batch, trg_batch, src_vocab, trg_vocab, encdec, is_training, gen
     trg_itos = trg_vocab.itos
     encdec.reset(batch_size)
 
-    if args.gpu >= 0:
-        chainer.cuda.get_device(args.gpu).use()
-        encdev.to_gpu()
-        xp = cuda.cupy()
+    if gpu >= 0:
+        chainer.cuda.get_device(gpu).use()
+        encdec.to_gpu()
+        xp = cuda.cupy
     else:
         xp = np
 
@@ -201,10 +203,10 @@ def train(args):
 
         opt = optimizers.AdaGrad(lr=0.01)
         opt.setup(encdec)
-        opt.add_hook(optimizer.GradientClipping(5))
+        opt.add_hook(chainer.optimizer.GradientClipping(5))
 
         for src_batch, trg_batch in gen3:
-            ret, loss = forward(src_batch, trg_batch, src_vocab. trg_vocab, encdec, True, 0)
+            ret, loss = forward(src_batch, trg_batch, src_vocab, trg_vocab, encdec, 0, args.gpu, True)
             loss.backward()
             opt.update()
 
@@ -225,7 +227,7 @@ def test(args):
     with open(args.target, "w", encoding="utf-8") as f:
         for src_batch in gens.batch(gets.word_list(args.source), args.minibatch):
             ret = forward(src_batch, None, src_vocab, trg_vocab,
-                    encdec, False, args.generation_limit)
+                    encdec, args.generation_limit, args.gpu)
 
             for sent in ret:
                 sent.append("</s>")

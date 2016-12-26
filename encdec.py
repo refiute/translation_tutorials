@@ -16,6 +16,7 @@ import utils.generators as gens
 from utils.vocabulary import Vocabulary
 
 def get_args():
+    gpu = -1
     src_vocab = 2000
     trg_vocab = 1000
     embed = 100
@@ -25,12 +26,12 @@ def get_args():
     generation_limit = 128
 
     args = ArgumentParser()
-    args.add_argument('env', help="\'train\' or \'test\'")
+    args.add_argument('env', help="'train' or 'test'")
     args.add_argument('source', help="[in] source corpus")
     args.add_argument('target', help="[in/out] target corpus")
     args.add_argument('model', help="[in/out] model file")
-    args.add_argument('--gpu', default=-1, type=int, metavar="INT",
-            help="GPU device ID (default: -1 [use CPU])")
+    args.add_argument('--gpu', default=gpu, type=int, metavar="INT",
+            help="GPU device ID (default: %(default)d [use CPU])")
     args.add_argument('--src_vocab', default=src_vocab, type=int, metavar="INT",
             help="source vocabulary size (default: %(default)d)")
     args.add_argument('--trg_vocab', default=trg_vocab, type=int, metavar="INT",
@@ -44,57 +45,82 @@ def get_args():
     args.add_argument('--generation_limit', default=generation_limit, type=int, metavar="INT",
             help="maximum number of words to be generated for test input (default: %(default)d)")
 
-    return args.parse_args()
+    p = args.parse_args()
+
+    try:
+        if p.mode not in ["train", "test"]:
+            raise ValueError("args: you must set env = 'train' or 'test'")
+        if p.src_vocab < 1:
+            raise ValueError("args: you must set --src_vocab >= 1")
+        if p.trg_vocab < 1:
+            raise ValueError("args: you must set --trg_vocab >= 1")
+        if p.embed < 1:
+            raise ValueError("args: you must set --embed >= 1")
+        if p.hidden < 1:
+            raise ValueError("args: you must set --hidden >= 1")
+        if p.minibatch < 1:
+            raise ValueError("args: you must set --minibatch >= 1")
+        if p.generation_limit < 1:
+            raise ValueError("args: you must set --generation_limit >= 1")
+    except Exception as ex:
+        p.print_usage(file=sys.stderr)
+        print(ex, file=sys.stderr)
+        sys.exit()
+
+    return p
 
 class Encoder(Chain):
-    def __init__(self, n_layer, vocab_size, embed_size, hidden_size, dropout=0.5, use_cudnn=True):
+    def __init__(self, n_layer, vocab_size, embed_size, hidden_size, dropout=0.5, use_cudnn=True, train=False):
         super(Encoder, self).__init__(
             embed = L.EmbedID(vocab_size, embed_size),
             lstm = L.NStepLSTM(n_layer, embed_size, hidden_size, dropout, use_cudnn)
         )
+        self.train = train
 
-    def __call__(self, x, c, h, train):
-        e = self.embed(x)
-        h, c, y = self.lstm(h, c, e, train=train)
+    def __call__(self, x, c, h):
+        e = self.tanh(self.embed(x))
+        h, c, y = self.lstm(h, c, e, train=self.train)
         return c, h
 
 class Decoder(Chain):
-    def __init__(self, n_layer, vocab_size, embed_size, hidden_size):
+    def __init__(self, n_layer, vocab_size, embed_size, hidden_size, train=False):
         super(Decoder, self).__init__(
             embed = L.EmbedID(vocab_size, embed_size),
             lstm = L.NStepLSTM(n_layer, embed_size, hidden_size, dropout, use_cudnn),
             lf = L.Linear(hidden_size, embed_size),
             fy = L.Linear(embed_size, vocab_size)
         )
+        self.train = train
 
-    def __call__(self, y, c, h, train):
-        e = self.embed(y)
-        h, c, l = self.lstm(h, c, e, train=train)
+    def __call__(self, y, c, h):
+        e = self.tanh(self.embed(y))
+        h, c, l = self.lstm(h, c, e, train=self.train)
         f = F.tanh(self.lf(l))
         y = self.fy(f)
         return y, c, h
 
 class EncoderDecoder(Chain):
-    def __init__(self, src_vocab, trg_vocab, embed_size, hidden_size):
+    def __init__(self, src_vocab, trg_vocab, embed_size, hidden_size, train=False):
         super(EncoderDecoder, self).__init__(
-            enc = Encoder(src_vocab, embed_size, hidden_size),
-            dec = Decoder(trg_vocab, embed_size, hidden_size)
+            enc = Encoder(src_vocab, embed_size, hidden_size, train=train),
+            dec = Decoder(trg_vocab, embed_size, hidden_size, train=train)
         )
         self.src_vocab = src_vocab
         self.trg_vocab = trg_vocab
         self.embed_size = embed_size
         self.hidden_size = hidden_size
+        self.train = train
 
     def reset(self, batch_size):
         self.cleargrads()
         self.c = initializers.Uniform(0.08, (batch_size, self.hidden_size))
         self.h = initializers.Uniform(0.08, (batch_size, self.hidden_size))
 
-    def encode(self, x, train=True):
-        self.c, self.h = self.enc(x, self.c, self.h, train=train)
+    def encode(self, x):
+        self.c, self.h = self.enc(x, self.c, self.h)
 
-    def decode(self, y, train=True):
-        y, self.c, self.h = self.dec(y, self.c, self.h, train=train)
+    def decode(self, y):
+        y, self.c, self.h = self.dec(y, self.c, self.h)
         return y
 
     def save_spec(self, filename):
@@ -105,13 +131,13 @@ class EncoderDecoder(Chain):
             print(self.hidden_size, file=fp)
 
     @staticmethod
-    def load_spec(filename):
+    def load_spec(filename, train=False):
         with open(filename, encoding="utf-8") as f:
             src_vocab = int(next(f))
             trg_vocab = int(next(f))
             embed_size = int(next(f))
             hidden_size = int(next(f))
-            return EncoderDecoder(src_vocab, trg_vocab. embed_size, hidden_size)
+            return EncoderDecoder(src_vocab, trg_vocab. embed_size, hidden_size, train=train)
 
 def forward(src_batch, trg_batch, src_vocab, trg_vocab, encdec, is_training, generation_limit):
     batch_size = len(src_batch)
@@ -163,7 +189,7 @@ def train(args):
     src_vocab = Vocabulary.new(gens.word_list(args.source), args.src_vocab)
     trg_vocab = Vocabulary.new(gens.word_list(args.target), args.trg_vocab)
 
-    encdec = EncoderDecoder(args.src_vocab, args.trg_vocab, args.embed, args.hidden)
+    encdec = EncoderDecoder(args.src_vocab, args.trg_vocab, args.embed, args.hidden, train=True)
     if args.gpu >= 0:
         encdec.to_gpu()
 

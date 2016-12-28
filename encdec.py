@@ -114,10 +114,8 @@ class EncoderDecoder(Chain):
 
     def reset(self, batch_size, xp=np):
         self.cleargrads()
-        self.c = xp.random.uniform(low=-0.08, high=0.08,
-                                   size=(batch_size, self.hidden_size), dtype=xp.float32)
-        self.h = xp.random.uniform(low=-0.08, high=0.08,
-                                   size=(batch_size, self.hidden_size), dtype=xp.float32)
+        self.c = xp.zeros((batch_size, self.hidden_size), dtype=xp.float32)
+        self.h = xp.zeros((batch_size, self.hidden_size), dtype=xp.float32)
 
     def encode(self, x):
         self.c, self.h = self.enc(x, self.c, self.h)
@@ -192,7 +190,7 @@ def train(args):
     trace("initializing model ...")
     encdec = EncoderDecoder(args.src_vocab, args.trg_vocab, args.embed, args.hidden)
     if args.gpu >= 0:
-        chainer.cuda.get_device(args.gpu).use()
+        cuda.get_device(args.gpu).use()
         encdec.to_gpu()
 
     for epoch in range(args.epoch):
@@ -237,7 +235,7 @@ def test(args):
     trg_vocab = Vocabulary.load(args.model + ".trg.vocab")
     encdec = EncoderDecoder.load_spec(args.model + ".spec")
     if args.gpu >= 0:
-        chainer.cuda.get_device(args.gpu).use()
+        cuda.get_device(args.gpu).use()
         encdec.to_gpu()
     serializers.load_hdf5(args.model + ".model", encdec)
 

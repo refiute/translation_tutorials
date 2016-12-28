@@ -17,7 +17,7 @@ def batch(generator, batch_size=-1):
     if batch:
         yield tuple(list(x) for x in zip(*batch)) if is_tuple else batch
 
-def concat_batches(generator1, generator2):
+def concat_generators(generator1, generator2):
     gen1 = batch(generator1)
     gen2 = batch(generator2)
 

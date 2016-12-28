@@ -9,11 +9,11 @@ class Vocabulary:
     def __len__(self):
         return self.__size
 
-    def stoi(self, str):
-        return self.__stoi[str]
+    def stoi(self, s):
+        return self.__stoi[s]
 
-    def itos(self, id):
-        return self.__itos[id]
+    def itos(self, i):
+        return self.__itos[i]
 
     @staticmethod
     def new(generator, size):
@@ -25,18 +25,18 @@ class Vocabulary:
             for word in words:
                 count[word] += 1
 
-        stoi = defaultdict(lambda: len(stoi))
+        stoi = defaultdict(lambda: 0)
         stoi["<unk>"] = 0
         stoi["<s>"] = 1
         stoi["</s>"] = 2
         for (s, _) in list(sorted(count.items(), key=lambda x: -x[1]))[:(size-3)]:
-            stoi[s]
+            stoi[s] = len(stoi)
 
         itos = [''] * size
         for (s, i) in stoi.items():
             itos[i] = s
 
-        self.__stoi = dict(stoi)
+        self.__stoi = stoi
         self.__itos = itos
 
         return self
@@ -52,7 +52,7 @@ class Vocabulary:
         with open(filename, encoding="utf-8") as f:
             self = Vocabulary()
             self.__size = int(next(f))
-            self.__stoi = dict()
+            self.__stoi = defaultdict(lambda: 0)
             self.__itos = [""] * self.__size
             for i in range(self.__size):
                 s = next(f).strip()

@@ -18,10 +18,10 @@ from utils.functions import fill_batch, trace
 
 def get_args():
     gpu = -1
-    src_vocab = 10000
-    trg_vocab = 10000
-    embed = 500
-    hidden = 1000
+    src_vocab = 2000
+    trg_vocab = 1000
+    embed = 100
+    hidden = 200
     epoch = 10
     minibatch = 64
     generation_limit = 128

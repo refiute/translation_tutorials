@@ -268,7 +268,7 @@ def train(args):
         gen2 = gens.word_list(args.target)
         gen3 = gens.batch(gens.concat_generators(gen1, gen2), args.minibatch)
 
-        opt = optimizers.AdaGrad(lr=0.01)
+        opt = optimizers.Adam()
         opt.setup(encdec)
         opt.add_hook(chainer.optimizer.GradientClipping(5))
 

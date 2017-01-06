@@ -103,7 +103,7 @@ class Attention(Chain):
         self.hidden_size = hidden_size
 
     def __call__(self, h_list, p):
-        batch_size = p.data.shape[0]
+        batch_size = p.shape[0]
         e_list = list()
         sum_e = Variable(xp.zeros((batch_size, 1), dtype=xp.float32))
 
